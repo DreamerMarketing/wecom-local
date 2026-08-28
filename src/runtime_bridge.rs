@@ -319,6 +319,7 @@ fn build_conversation_list_expression(output_path: &Path) -> String {
 @import Foundation; @import ObjectiveC;
 id (*__whObj)(id, SEL) = (id (*)(id, SEL))objc_msgSend;
 id (*__whObj1)(id, SEL, id) = (id (*)(id, SEL, id))objc_msgSend;
+id (*__whObjUllArg)(id, SEL, unsigned long long) = (id (*)(id, SEL, unsigned long long))objc_msgSend;
 unsigned long long (*__whUll)(id, SEL) = (unsigned long long (*)(id, SEL))objc_msgSend;
 long long (*__whLl)(id, SEL) = (long long (*)(id, SEL))objc_msgSend;
 double (*__whDbl)(id, SEL) = (double (*)(id, SEL))objc_msgSend;
@@ -330,21 +331,42 @@ id __whConversationSvc = [__whMgr conversationService];
 NSMutableDictionary *__whPayload = [NSMutableDictionary dictionary];
 NSMutableArray *__whRows = [NSMutableArray array];
 [__whPayload setObject:__whRows forKey:@"conversations"];
-SEL __whListSel = sel_registerName("getAllActiveAndUnblockedConversationIds");
+SEL __whFetchSel = sel_registerName("fetchAllConversationsWithFilterType:");
+SEL __whLegacyListSel = sel_registerName("getAllActiveAndUnblockedConversationIds");
 SEL __whConvSel = sel_registerName("conversationWithId:");
 SEL __whRespondsSel = sel_registerName("respondsToSelector:");
-if (!__whConversationSvc || !__whResponds(__whConversationSvc, __whRespondsSel, __whListSel) || !__whResponds(__whConversationSvc, __whRespondsSel, __whConvSel)) {{
+BOOL __whCanFetch = __whConversationSvc && __whResponds(__whConversationSvc, __whRespondsSel, __whFetchSel);
+BOOL __whCanUseLegacyList = __whConversationSvc && __whResponds(__whConversationSvc, __whRespondsSel, __whLegacyListSel) && __whResponds(__whConversationSvc, __whRespondsSel, __whConvSel);
+if (!__whCanFetch && !__whCanUseLegacyList) {{
     [__whPayload setObject:@"conversation list selector unavailable" forKey:@"error"];
     [__whPayload setObject:@0 forKey:@"total_count"];
     [__whPayload setObject:@0 forKey:@"matched_count"];
 }} else {{
-    NSArray *__whIds = __whObj(__whConversationSvc, __whListSel) ?: @[];
+    NSMutableArray *__whConversationValues = [NSMutableArray array];
+    if (__whCanFetch) {{
+        SEL __whConversationIdSel = sel_registerName("conversationId");
+        NSArray *__whFetchedConversations = __whObjUllArg(__whConversationSvc, __whFetchSel, 0) ?: @[];
+        for (id __whConversation in __whFetchedConversations) {{
+            if (!__whResponds(__whConversation, __whRespondsSel, __whConversationIdSel)) {{ continue; }}
+            NSString *__whConversationId = __whObj(__whConversation, __whConversationIdSel) ?: @"";
+            if ([__whConversationId length] == 0) {{ continue; }}
+            [__whConversationValues addObject:@{{@"conversation": __whConversation, @"conversation_id": __whConversationId}}];
+        }}
+    }}
+    if ([__whConversationValues count] == 0 && __whCanUseLegacyList) {{
+        NSArray *__whIds = __whObj(__whConversationSvc, __whLegacyListSel) ?: @[];
+        for (id __whConversationId in __whIds) {{
+            id __whConversation = __whObj1(__whConversationSvc, __whConvSel, __whConversationId);
+            if (__whConversation) {{
+                [__whConversationValues addObject:@{{@"conversation": __whConversation, @"conversation_id": __whConversationId}}];
+            }}
+        }}
+    }}
     NSDateFormatter *__whDateFormatter = [[NSDateFormatter alloc] init];
     [__whDateFormatter setDateFormat:@"yyyy-MM-dd HH:mm:ss"];
-    for (id __whConversationIdValue in __whIds) {{
-        NSString *__whConversationId = (NSString *)__whConversationIdValue;
-        id __whConversation = __whObj1(__whConversationSvc, __whConvSel, __whConversationId);
-        if (!__whConversation) {{ continue; }}
+    for (NSDictionary *__whConversationValue in __whConversationValues) {{
+        id __whConversation = [__whConversationValue objectForKey:@"conversation"];
+        NSString *__whConversationId = [__whConversationValue objectForKey:@"conversation_id"];
         NSString *__whName = __whObj(__whConversation, sel_registerName("name")) ?: @"";
         NSDate *__whModifyTime = __whObj(__whConversation, sel_registerName("modifyTime"));
         NSDate *__whCreateTime = __whObj(__whConversation, sel_registerName("createTime"));
@@ -364,7 +386,7 @@ if (!__whConversationSvc || !__whResponds(__whConversationSvc, __whRespondsSel, 
             @"is_blocked": @(__whBool(__whConversation, sel_registerName("isBlocked")))
         }}];
     }}
-    [__whPayload setObject:@([__whIds count]) forKey:@"total_count"];
+    [__whPayload setObject:@([__whRows count]) forKey:@"total_count"];
     [__whPayload setObject:@([__whRows count]) forKey:@"matched_count"];
 }}
 NSError *__whJsonError = nil;
@@ -616,6 +638,18 @@ mod tests {
         assert_eq!(script.matches("expr -l objc++ -O --").count(), 2);
         assert_eq!(script.matches("process detach").count(), 1);
         assert!(script.ends_with("quit\n"));
+    }
+
+    #[test]
+    fn prefers_filtered_conversation_objects_with_a_legacy_fallback() {
+        let output_path = std::env::temp_dir().join("synthetic-conversations.json");
+        let expression = build_conversation_list_expression(&output_path);
+
+        assert!(expression.contains("fetchAllConversationsWithFilterType:"));
+        assert!(expression.contains("__whFetchSel, 0"));
+        assert!(expression.contains("getAllActiveAndUnblockedConversationIds"));
+        assert!(expression.contains("[__whConversationValues count] == 0"));
+        assert!(expression.contains("sel_registerName(\"conversationId\")"));
     }
 
     #[test]
