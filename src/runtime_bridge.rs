@@ -335,6 +335,9 @@ SEL __whFetchSel = sel_registerName("fetchAllConversationsWithFilterType:");
 SEL __whLegacyListSel = sel_registerName("getAllActiveAndUnblockedConversationIds");
 SEL __whConvSel = sel_registerName("conversationWithId:");
 SEL __whRespondsSel = sel_registerName("respondsToSelector:");
+BOOL (^__whOptionalBool)(id, SEL) = ^BOOL(id __whObject, SEL __whSelector) {{
+    return __whObject && __whResponds(__whObject, __whRespondsSel, __whSelector) && __whBool(__whObject, __whSelector);
+}};
 BOOL __whCanFetch = __whConversationSvc && __whResponds(__whConversationSvc, __whRespondsSel, __whFetchSel);
 BOOL __whCanUseLegacyList = __whConversationSvc && __whResponds(__whConversationSvc, __whRespondsSel, __whLegacyListSel) && __whResponds(__whConversationSvc, __whRespondsSel, __whConvSel);
 if (!__whCanFetch && !__whCanUseLegacyList) {{
@@ -372,10 +375,16 @@ if (!__whCanFetch && !__whCanUseLegacyList) {{
         NSDate *__whCreateTime = __whObj(__whConversation, sel_registerName("createTime"));
         NSString *__whModifyTimeText = __whModifyTime ? [__whDateFormatter stringFromDate:__whModifyTime] : @"";
         NSString *__whCreateTimeText = __whCreateTime ? [__whDateFormatter stringFromDate:__whCreateTime] : @"";
+        long long __whConversationType = __whLl(__whConversation, sel_registerName("conversationType"));
+        BOOL __whIsExternalGroup = __whOptionalBool(
+            __whConversation,
+            sel_registerName("isOuterGroupConversation")
+        );
         [__whRows addObject:@{{
             @"conversation_id": __whConversationId ?: @"",
             @"conversation_name": __whName ?: @"",
-            @"conversation_type": @(__whLl(__whConversation, sel_registerName("conversationType"))),
+            @"conversation_type": @(__whConversationType),
+            @"is_external_group": @(__whIsExternalGroup),
             @"last_message_id": @(__whUll(__whConversation, sel_registerName("lastMessageId"))),
             @"modify_time": __whModifyTime ? @(__whDbl(__whModifyTime, sel_registerName("timeIntervalSince1970"))) : @0,
             @"modify_time_text": __whModifyTimeText,
@@ -650,6 +659,17 @@ mod tests {
         assert!(expression.contains("getAllActiveAndUnblockedConversationIds"));
         assert!(expression.contains("[__whConversationValues count] == 0"));
         assert!(expression.contains("sel_registerName(\"conversationId\")"));
+    }
+
+    #[test]
+    fn marks_external_groups_without_treating_every_group_as_external() {
+        let output_path = std::env::temp_dir().join("synthetic-external-groups.json");
+        let expression = build_conversation_list_expression(&output_path);
+
+        assert!(expression.contains("@\"is_external_group\""));
+        assert!(expression.contains("sel_registerName(\"isOuterGroupConversation\")"));
+        assert!(!expression.contains("sel_registerName(\"isExternalGroup:\")"));
+        assert!(!expression.contains("__whConversationType == 2 &&"));
     }
 
     #[test]

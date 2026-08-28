@@ -66,6 +66,27 @@ pub fn normalize_payload(mut raw: Value, query: Option<&str>) -> Result<Value> {
     Ok(raw)
 }
 
+pub fn retain_external_groups(payload: &mut Value) -> Result<()> {
+    let matched_count = {
+        let rows = payload
+            .get_mut("conversations")
+            .and_then(Value::as_array_mut)
+            .ok_or_else(|| anyhow!("runtime export does not contain a conversations array"))?;
+        rows.retain(|row| {
+            row.get("is_external_group")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        });
+        rows.len()
+    };
+
+    if let Some(obj) = payload.as_object_mut() {
+        obj.insert("external_only".to_string(), json!(true));
+        obj.insert("matched_count".to_string(), json!(matched_count));
+    }
+    Ok(())
+}
+
 pub fn looks_like_conversation_id(value: &str) -> bool {
     let value = value.trim();
     (value.starts_with("R:") || value.starts_with("S:"))
@@ -267,6 +288,29 @@ mod tests {
         assert_eq!(payload["total_count"], 3);
         assert_eq!(payload["matched_count"], 1);
         assert_eq!(rows[0]["conversation_id"], "R:0000000003");
+    }
+
+    #[test]
+    fn external_group_filter_fails_closed_when_marker_is_missing() {
+        let mut payload = json!({
+            "total_count": 3,
+            "matched_count": 3,
+            "conversations": [
+                {"conversation_id": "R:0000000001", "is_external_group": true},
+                {"conversation_id": "R:0000000002", "is_external_group": false},
+                {"conversation_id": "R:0000000003"}
+            ]
+        });
+
+        retain_external_groups(&mut payload).unwrap();
+
+        assert_eq!(payload["external_only"], true);
+        assert_eq!(payload["total_count"], 3);
+        assert_eq!(payload["matched_count"], 1);
+        assert_eq!(
+            payload["conversations"][0]["conversation_id"],
+            "R:0000000001"
+        );
     }
 
     #[test]

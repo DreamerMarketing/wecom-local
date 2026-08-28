@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 
-use crate::{auth, doctor, local_query, members, output, store_probe};
+use crate::{auth, conversations, doctor, local_query, members, output, store_probe};
 
 #[derive(Parser)]
 #[command(
@@ -40,6 +40,9 @@ enum Commands {
         /// Filter conversations by id or display name.
         #[arg(long)]
         query: Option<String>,
+        /// Return only conversations confirmed as external groups.
+        #[arg(long)]
+        external_only: bool,
     },
     /// Read messages from a WeCom conversation id or display-name query.
     History {
@@ -51,6 +54,12 @@ enum Commands {
         /// Message offset in the conversation message-id list.
         #[arg(long, default_value = "0")]
         offset: usize,
+        /// Inclusive local start time: YYYY-MM-DD or YYYY-MM-DD HH:MM:SS.
+        #[arg(long)]
+        since: Option<String>,
+        /// Exclusive local end time: YYYY-MM-DD or YYYY-MM-DD HH:MM:SS.
+        #[arg(long)]
+        until: Option<String>,
         /// Output format.
         #[arg(short = 'f', long, value_enum, default_value = "json")]
         format: OutputFormat,
@@ -178,17 +187,31 @@ pub fn run() -> Result<()> {
             let report = store_probe::run();
             output::print_json(&serde_json::to_value(report)?)
         }
-        Commands::Conversations { query } => {
-            let payload = local_query::discover_conversations(query.as_deref())?;
+        Commands::Conversations {
+            query,
+            external_only,
+        } => {
+            let mut payload = local_query::discover_conversations(query.as_deref())?;
+            if external_only {
+                conversations::retain_external_groups(&mut payload)?;
+            }
             output::print_json(&payload)
         }
         Commands::History {
             conversation,
             limit,
             offset,
+            since,
+            until,
             format,
         } => {
-            let payload = local_query::read_history(&conversation, limit, offset)?;
+            let payload = local_query::read_history_in_range(
+                &conversation,
+                limit,
+                offset,
+                since.as_deref(),
+                until.as_deref(),
+            )?;
             print_payload(&payload, format)
         }
         Commands::Search {
