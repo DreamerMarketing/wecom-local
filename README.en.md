@@ -182,6 +182,17 @@ Query speed still depends on WeCom Desktop runtime attach and macOS
 authorization. The CLI itself is lightweight; runtime access is usually the
 slow part.
 
+## Daily External-Group Actions
+
+The repository also contains a reproducible daily workflow at
+`skills/wecom-daily-external-actions/SKILL.md`. It reads yesterday's visible
+external groups, creates a sanitized operations todo workbook, and sends it only
+when the runner is invoked with `--send`.
+
+Setup and execution are documented in
+[`docs/daily-external-actions.md`](docs/daily-external-actions.md). Real webhook
+secrets stay in the ignored local configuration or environment variables.
+
 ## Quick Start
 
 ```bash

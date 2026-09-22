@@ -18,6 +18,7 @@
 
 # Local runtime outputs can contain private WeCom data.
 /.local/
+/outputs/
 /exports/
 /local-smoke-notes/
 /smoke-output/

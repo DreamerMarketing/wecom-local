@@ -23,6 +23,12 @@ Short analysis skills:
 - `wc-draft/SKILL.md`: draft the next WeCom message from local context without
   sending it automatically.
 
+Daily automation:
+
+- `wecom-daily-external-actions/SKILL.md`: analyze all visible external groups
+  from yesterday, generate a sanitized operations todo workbook, and optionally
+  send it to a configured WeCom robot webhook.
+
 OpenCLI is documented separately under `opencli/` because the first integration
 path is external CLI registration.
 

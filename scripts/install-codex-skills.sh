@@ -72,6 +72,7 @@ install_skill "$repo_root/skills/wc-scan" "wc-scan"
 install_skill "$repo_root/skills/wc-audit" "wc-audit"
 install_skill "$repo_root/skills/wc-style" "wc-style"
 install_skill "$repo_root/skills/wc-draft" "wc-draft"
+install_skill "$repo_root/skills/wecom-daily-external-actions" "wecom-daily-external-actions"
 
 echo
 echo "Restart Codex to pick up newly installed skills."

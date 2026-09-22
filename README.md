@@ -199,6 +199,16 @@ ln -sf "$PWD/target/release/wecom-local" "$HOME/.local/bin/wecom-local"
 当前状态都会影响耗时。所以这里不宣传具体“毫秒级”数字；更准确的说法是：CLI 本
 身很轻，真正慢的地方通常在本机 Runtime 访问。
 
+## 外部群每日待办
+
+仓库还包含一个可提交、可复现的每日外部群分析 Skill：
+`skills/wecom-daily-external-actions/SKILL.md`。它会读取昨天所有可见外部群，生成
+脱敏的运营待办 Excel，并在明确使用 `--send` 时发送到本地配置的企业微信群机器人。
+
+首次配置和运行方式见
+[`docs/daily-external-actions.md`](docs/daily-external-actions.md)。真实 webhook
+只保存在 `.local/wecom-local/wecom-webhook.url` 或环境变量中，不应写入 Git。
+
 ## 快速开始
 
 检查运行环境：
