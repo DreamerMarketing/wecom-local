@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { platforms, inferPlatforms, extractActions } from "./daily_action_rules.mjs";
 
 const execFileAsync = promisify(execFile);
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
@@ -12,8 +13,6 @@ const artifactPath = process.env.WECOM_ARTIFACT_TOOL || path.join(repoDir, "node
 const outputDir = path.join(repoDir, "outputs", "daily-wecom-todos");
 const runDir = path.join(repoDir, ".local", "wecom-local", "daily-runs");
 const webhookFile = process.env.WECOM_WEBHOOK_FILE || path.join(repoDir, ".local", "wecom-local", "wecom-webhook.url");
-const organizationLabel = String(process.env.WECOM_ORG_LABEL || "外部群").trim() || "外部群";
-const organizationFileLabel = organizationLabel.replace(/[\\/:*?"<>|]/g, "_").slice(0, 40) || "外部群";
 
 const { Workbook, SpreadsheetFile } = await import(artifactPath);
 
@@ -132,14 +131,6 @@ function completionStandard(category) {
   return "完成后在群内回报；状态更新为已完成";
 }
 
-function deriveTask(text) {
-  const value = compact(text);
-  if (!value) return "根据群内消息完成后续跟进，并回报结果";
-  if (/余额|充值|消耗完|投放|广告/.test(value)) return `核验广告余额与计划状态，完成充值/恢复/调整投放：${value}`;
-  if (/客资|加微|已读不回|回复|私信/.test(value)) return `跟进客资与私信，完成回复和二次触达：${value}`;
-  if (/素材|客片|空厅|回传|拍摄/.test(value)) return `收集、整理并排期使用素材：${value}`;
-  return value;
-}
 
 function isBotLike(sender, text) {
   const senderText = String(sender ?? "");
@@ -163,12 +154,12 @@ function messageDateInShanghai(message) {
   return null;
 }
 
-function extractCandidate(message, groupName) {
+function extractCandidate(message, groupName, action) {
   const rawText = message.text || message.display_text || message.summary_content || message.summary_tips || "";
   const rawSender = message.sender_display || message.real_sender_name || message.normal_user_name || message.sender_name || "未标注发送者";
-  const text = String(rawText).trim();
+  const text = String(action?.text || rawText).trim();
   const sender = String(rawSender).trim();
-  if (!text || text.length < 8 || isBotLike(sender, text)) return null;
+  if (!text || isBotLike(sender, String(rawText))) return null;
   const hitPatterns = [
     ["充值", /充值|余额/], ["投放", /投放|广告|预算|人群|点击|留资/], ["客服", /客服|客资|加微|私信|回复|已读不回/],
     ["内容", /小红书|抖音|脚本|直播|美团|点评|婚礼纪|视频|发布|文案/], ["素材", /素材|客片|空厅|回传|拍摄/],
@@ -177,18 +168,19 @@ function extractCandidate(message, groupName) {
   ];
   const hits = hitPatterns.filter(([, pattern]) => pattern.test(text)).map(([name]) => name);
   const score = hits.length + (/(本周计划|工作安排|后续工作|请|需要|要|完成|尽快|及时)/.test(text) ? 1 : 0);
-  if (score < 2) return null;
+  if (!action) return null;
   const redactedText = redact(text);
   const redactedSender = redact(sender);
   const redactedGroup = redact(groupName);
   const category = inferCategory(text, sender);
   return {
     time: parseDateTime(message.send_time_text || message.send_time),
-    sender: redactedSender,
+    sender: /@([^\s，,:：]+)/.test(text) ? redact(text.match(/@([^\s，,:：]+)/)[1]) : `待指派（发言者：${redactedSender}）`,
     group: redactedGroup,
     timing: inferTiming(text),
     category,
-    task: deriveTask(text),
+    task: compact(action.task),
+    platforms: action.platforms,
     source: redactedText.length > 600 ? `${redactedText.slice(0, 600)}…` : redactedText,
     priority: inferPriority(text, score),
     status: "待确认",
@@ -198,9 +190,6 @@ function extractCandidate(message, groupName) {
   };
 }
 
-function normalizeForDedup(text) {
-  return String(text ?? "").replace(/\d+/g, "").replace(/\s+/g, "").slice(0, 100);
-}
 
 async function runCli(args) {
   const { stdout } = await execFileAsync("/usr/bin/sudo", ["-n", binaryPath, ...args], {
@@ -275,7 +264,7 @@ function priorityRank(priority) {
   return priority === "P0" ? 0 : priority === "P1" ? 1 : 2;
 }
 
-function buildWorkbook({ targetDate, histories, candidates, failures, counts }) {
+export function buildWorkbook({ targetDate, platform, candidates, failures, counts }) {
   const workbook = Workbook.create();
   const summarySheet = workbook.worksheets.add("汇总");
   const todoSheet = workbook.worksheets.add("待办清单");
@@ -291,7 +280,7 @@ function buildWorkbook({ targetDate, histories, candidates, failures, counts }) 
   const seen = new Set();
   const sortedCandidates = [...candidates].sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority) || (b.score - a.score));
   for (const candidate of sortedCandidates) {
-    const key = `${candidate.group}|${candidate.category}|${candidate.timing}|${normalizeForDedup(candidate.task)}`;
+    const key = `${candidate.group}|${candidate.sender}|${candidate.category}|${candidate.timing}|${candidate.task}`;
     if (seen.has(key)) continue;
     seen.add(key);
     todoRows.push(candidate);
@@ -313,7 +302,7 @@ function buildWorkbook({ targetDate, histories, candidates, failures, counts }) 
     sheet.getRange(band).format.rowHeight = 26;
     const subtitleAddress = address.replace(/2$/, "3");
     sheet.getRange(subtitleAddress).values = [[subtitle]];
-    sheet.getRange(subtitleAddress).format = { font: { name: "Arial", size: 10, italic: true, color: "#52606D" }, wrapText: true };
+    sheet.getRange(subtitleAddress).format = { font: { name: "Arial", size: 10, italic: true, color: "#52606D" }, wrapText: false };
     sheet.getRange(subtitleAddress).format.rowHeight = 18;
   }
   function header(range) {
@@ -342,9 +331,9 @@ function buildWorkbook({ targetDate, histories, candidates, failures, counts }) 
     return [item.time, item.sender, item.group, item.timing, item.category, item.task, item.source, item.priority, item.status, item.messageId];
   }
 
-  title(summarySheet, "A2:H2", `${organizationLabel}运营待办总览`, `昨日数据：${targetDate}，外部群行动分析`, "A2");
+  title(summarySheet, "A2:H2", `${platform}运营待办总览`, `统计日期：${targetDate}，${platform}外部群行动分析`, "A2");
   summarySheet.getRange("A4:B11").values = [
-    ["数据指标", "数值"], ["外部群会话", counts.externalGroups], ["有聊天记录的群", counts.groupsWithMessages], ["昨日消息总数", counts.totalMessages],
+    ["数据指标", "数值"], ["外部群会话", counts.externalGroups], ["有聊天记录的群", counts.groupsWithMessages], ["当日消息总数", counts.totalMessages],
     ["扫描消息ID", counts.totalScanned], ["文本消息", counts.textMessages], ["明确行动候选", candidates.length], ["归并待办", todoRows.length],
   ];
   header(summarySheet.getRange("A4:B4"));
@@ -378,7 +367,7 @@ function buildWorkbook({ targetDate, histories, candidates, failures, counts }) 
   }
   summarySheet.getRange("F10:H10").values = [["使用说明", "", ""]];
   summarySheet.getRange("F10:H10").format = { fill: navy, font: { name: "Arial", size: 10, bold: true, color: "#FFFFFF" } };
-  summarySheet.getRange("F11:H14").values = [["待办清单", "按负责人、群、时间点、优先级筛选；状态从“待确认”开始。", ""], ["聊天行动明细", "昨日行动型消息明细；链接、邮箱、手机号和长数字已隐藏。", ""], ["口径", "负责人根据发言者与上下文推断，未明确指派的事项保留原发言者。", ""], ["采集状态", failures.length ? `有 ${failures.length} 个群读取失败，请查看本地运行日志。` : "所有外部群均已读取。", ""]];
+  summarySheet.getRange("F11:H14").values = [["待办清单", "按负责人、群、时间点、优先级筛选；状态从“待确认”开始。", ""], ["聊天行动明细", "昨日行动型消息明细；链接、邮箱、手机号和长数字已隐藏。", ""], ["口径", "消息平台优先，群名补充；未明确指定负责人标记待指派。跨平台动作可在多份文件出现。", ""], ["采集状态", failures.length ? `有 ${failures.length} 个群读取失败，禁止发送。` : "所有外部群均已读取。", ""]];
   summarySheet.getRange("F11:H14").format.borders = { top: border, bottom: border, left: border, right: border };
   summarySheet.getRange("F11:F14").format.fill = paleBlue;
   summarySheet.getRange("F11:F14").format.font = { name: "Arial", size: 10, bold: true, color: navy };
@@ -393,7 +382,7 @@ function buildWorkbook({ targetDate, histories, candidates, failures, counts }) 
   summarySheet.getRange("F11:H14").format.rowHeight = 38;
 
   const todoData = todoRows.map(asTodoRow);
-  title(todoSheet, "A2:K2", `${organizationLabel}运营待办清单`, "按优先级、负责人、群和执行时间点跟进", "D2");
+  title(todoSheet, "A2:K2", `${platform}运营待办清单`, "按优先级、负责人、群和执行时间点跟进", "D2");
   todoSheet.getRange("A4:K4").values = [["编号", "执行时间点", "截止/频次", "运营/负责人", "群", "平台/类别", "待办事项", "完成标准", "优先级", "状态", "聊天依据"]];
   header(todoSheet.getRange("A4:K4"));
   if (todoData.length) todoSheet.getRange(`A5:K${4 + todoData.length}`).values = todoData;
@@ -417,10 +406,13 @@ function buildWorkbook({ targetDate, histories, candidates, failures, counts }) 
   todoSheet.getRange("I:I").format.columnWidth = 9;
   todoSheet.getRange("J:J").format.columnWidth = 11;
   todoSheet.getRange("K:K").format.columnWidth = 30;
-  todoSheet.getRange(`A5:K${todoEnd}`).format.rowHeight = 42;
+  todoData.forEach((row, index) => {
+    const lines = Math.max(...row.map((value, col) => Math.ceil(String(value ?? "").length / [7, 16, 12, 18, 26, 12, 42, 24, 7, 8, 22][col])));
+    todoSheet.getRange(`A${index + 5}:K${index + 5}`).format.rowHeight = Math.max(42, lines * 16);
+  });
 
   const detailData = candidates.map(asDetailRow);
-  title(detailSheet, "A2:J2", "聊天行动明细", "保留昨日识别出的行动型消息，内容已脱敏", "F2");
+  title(detailSheet, "A2:J2", "聊天行动明细", "保留统计日期内识别出的行动型消息，内容已脱敏", "F2");
   detailSheet.getRange("A4:J4").values = [["聊天时间", "运营/负责人", "群", "执行时间点", "平台/类别", "待办事项", "原始聊天要点（已脱敏）", "优先级", "状态", "消息ID"]];
   header(detailSheet.getRange("A4:J4"));
   if (detailData.length) detailSheet.getRange(`A5:J${4 + detailData.length}`).values = detailData;
@@ -444,12 +436,15 @@ function buildWorkbook({ targetDate, histories, candidates, failures, counts }) 
   detailSheet.getRange("H:H").format.columnWidth = 9;
   detailSheet.getRange("I:I").format.columnWidth = 11;
   detailSheet.getRange("J:J").format.columnWidth = 18;
-  detailSheet.getRange(`A5:J${detailEnd}`).format.rowHeight = 54;
+  detailData.forEach((row, index) => {
+    const lines = Math.max(...row.map((value, col) => Math.ceil(String(value ?? "").length / [18, 18, 24, 16, 13, 44, 46, 7, 8, 13][col])));
+    detailSheet.getRange(`A${index + 5}:J${index + 5}`).format.rowHeight = Math.max(54, lines * 16);
+  });
 
   return { workbook, todoRows, detailRows: candidates, ownerCount: ownerRows.length };
 }
 
-async function sendWorkbook(filePath, webhookUrl) {
+export async function sendWorkbook(filePath, webhookUrl) {
   const base = new URL(webhookUrl);
   base.pathname = "/cgi-bin/webhook/upload_media";
   base.search = `?key=${encodeURIComponent(new URL(webhookUrl).searchParams.get("key") || "")}&type=file`;
@@ -464,12 +459,14 @@ async function sendWorkbook(filePath, webhookUrl) {
   return { ok: true };
 }
 
-async function readWebhookUrl() {
+export async function readWebhookUrl() {
   if (process.env.WECOM_WEBHOOK_URL) return process.env.WECOM_WEBHOOK_URL.trim();
   return (await fs.readFile(webhookFile, "utf8")).trim();
 }
 
+async function main() {
 const args = parseArgs(process.argv.slice(2));
+const webhookUrl = args.send ? await readWebhookUrl() : null;
 const today = datePartsInShanghai();
 const targetDate = args.date || shiftDate(today, -1);
 if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) throw new Error(`无效日期：${targetDate}`);
@@ -477,6 +474,7 @@ const until = shiftDate(targetDate, 1);
 await ensureWeComReady();
 const conversationsPayload = await runCli(["conversations", "--external-only"]);
 const conversations = conversationsPayload.conversations || [];
+if (!conversations.length) throw new Error("未发现可见外部群；请确认企业微信已登录");
 const historyResults = await fetchHistories(conversations, targetDate, until);
 const failures = historyResults.filter((item) => item.error).map((item) => ({ group: redact(item.conversation?.conversation_name), conversationId: redact(item.conversation?.conversation_id), error: "读取失败" }));
 const messages = historyResults
@@ -490,7 +488,10 @@ const messages = historyResults
     return !messageDate || messageDate === targetDate;
   });
 const textMessages = messages.filter((message) => String(message.text || message.display_text || message.summary_content || "").trim()).length;
-const candidates = messages.map((message) => extractCandidate(message, message.__group)).filter(Boolean);
+const candidates = messages.flatMap((message) => {
+  const text = message.text || message.display_text || message.summary_content || message.summary_tips || "";
+  return extractActions(text, message.__group).map((action) => extractCandidate(message, message.__group, action)).filter(Boolean);
+});
 const counts = {
   externalGroups: conversations.length,
   groupsWithMessages: new Set(messages.map((message) => message.__conversationId)).size,
@@ -498,33 +499,62 @@ const counts = {
   totalScanned: historyResults.reduce((sum, item) => sum + Number(item.history?.scanned_count || 0), 0),
   textMessages,
 };
-const built = buildWorkbook({ targetDate, histories: historyResults, candidates, failures, counts });
-await built.workbook.recalculate();
-await built.workbook.inspect({ kind: "table", range: "汇总!A1:H25", include: "values,formulas", table_max_rows: 25, table_max_cols: 8 });
-await built.workbook.inspect({ kind: "table", range: "待办清单!A1:K12", include: "values,formulas", table_max_rows: 12, table_max_cols: 11 });
-await built.workbook.inspect({ kind: "match", search_term: "#REF!|#DIV/0!|#VALUE!|#NAME\\?|#N/A", options: { use_regex: true, max_results: 100 }, summary: "daily formula error scan" });
 await fs.mkdir(outputDir, { recursive: true });
 await fs.mkdir(runDir, { recursive: true });
-const outputPath = path.join(outputDir, `${organizationFileLabel}运营待办事项_${targetDate}.xlsx`);
-const exported = await SpreadsheetFile.exportXlsx(built.workbook);
-await exported.save(outputPath);
 const previewDir = path.join(runDir, targetDate);
 await fs.mkdir(previewDir, { recursive: true });
-for (const [sheetName, range, fileName] of [["汇总", "A1:H25", "summary.png"], ["待办清单", "A1:K22", "todo.png"], ["聊天行动明细", "A1:J18", "detail.png"]]) {
-  const image = await built.workbook.render({ sheetName, range, scale: 1.2, format: "png" });
-  await fs.writeFile(path.join(previewDir, fileName), new Uint8Array(await image.arrayBuffer()));
+const outputs = [];
+for (const platform of platforms) {
+  const platformMessages = messages.filter((message) => inferPlatforms(message.text || message.display_text || message.summary_content || "", message.__group).includes(platform));
+  const platformCounts = {
+    externalGroups: conversations.filter((conversation) => inferPlatforms("", conversation.conversation_name).includes(platform)
+      || platformMessages.some((message) => message.__conversationId === conversation.conversation_id)).length,
+    groupsWithMessages: new Set(platformMessages.map((message) => message.__conversationId)).size,
+    totalMessages: platformMessages.length,
+    totalScanned: counts.totalScanned,
+    textMessages: platformMessages.filter((message) => String(message.text || message.display_text || message.summary_content || "").trim()).length,
+  };
+  const platformCandidates = candidates.filter((item) => item.platforms.includes(platform));
+  const built = buildWorkbook({ targetDate, platform, candidates: platformCandidates, failures, counts: platformCounts });
+  built.workbook.worksheets.getItem("汇总").getRange("A8").values = [["全量扫描消息ID"]];
+  await built.workbook.recalculate();
+  for (const range of ["汇总!A1:H25", "待办清单!A1:K12", "聊天行动明细!A1:J12"]) {
+    await built.workbook.inspect({ kind: "table", range, include: "values,formulas", tableMaxRows: 12, tableMaxCols: 11 });
+  }
+  const errors = await built.workbook.inspect({ kind: "match", searchTerm: "#REF!|#DIV/0!|#VALUE!|#NAME\\?|#N/A|#NUM!|#NULL!|#SPILL!|#CALC!", options: { useRegex: true, maxResults: 100 }, summary: "daily formula error scan" });
+  if (/"(?:value|text)"\s*:\s*"#(?:REF!|DIV\/0!|VALUE!|NAME\?|N\/A|NUM!|NULL!|SPILL!|CALC!)/.test(errors.ndjson || "")) throw new Error("Excel 公式校验失败");
+  const outputPath = path.join(outputDir, `${platform}运营待办事项_${targetDate}.xlsx`);
+  const exported = await SpreadsheetFile.exportXlsx(built.workbook);
+  await exported.save(outputPath);
+  for (const [sheetName, range, fileName] of [["汇总", "A1:H25", "summary.png"], ["待办清单", "A1:K12", "todo.png"], ["聊天行动明细", "A1:J12", "detail.png"]]) {
+    const image = await built.workbook.render({ sheetName, range, scale: 1.2, format: "png" });
+    await fs.writeFile(path.join(previewDir, `${platform}-${fileName}`), new Uint8Array(await image.arrayBuffer()));
+  }
+  outputs.push({ platform, outputPath, ...platformCounts, candidates: platformCandidates.length, todoRows: built.todoRows.length, delivery: "skipped" });
 }
-let delivery = { ok: false, skipped: true };
 let deliveryError = null;
-if (args.send) {
-  try {
-    delivery = await sendWorkbook(outputPath, await readWebhookUrl());
-  } catch (error) {
-    delivery = { ok: false, skipped: false };
-    deliveryError = error;
+if (args.send && failures.length === 0) {
+  for (const output of outputs) {
+    try {
+      await sendWorkbook(output.outputPath, webhookUrl);
+      output.delivery = "sent";
+    } catch {
+      output.delivery = "failed";
+      deliveryError = new Error(`${output.platform}文件上传或发送失败`);
+      break;
+    }
   }
 }
-const runSummary = { targetDate, outputPath, externalGroups: counts.externalGroups, groupsWithMessages: counts.groupsWithMessages, totalMessages: counts.totalMessages, textMessages: counts.textMessages, candidates: candidates.length, todoRows: built.todoRows.length, failures: failures.length, delivery: delivery.ok ? "sent" : delivery.skipped ? "skipped" : "failed" };
+const runSummary = { targetDate, ...counts, candidates: candidates.length, unclassifiedActions: candidates.filter((item) => !item.platforms.length).length, failures: failures.length, outputs };
 await fs.writeFile(path.join(runDir, `${targetDate}.json`), JSON.stringify(runSummary, null, 2), { mode: 0o600 });
 console.log(JSON.stringify(runSummary));
 if (deliveryError) throw deliveryError;
+if (failures.length) throw new Error(`外部群读取失败数 ${failures.length}，未发送 Excel`);
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch(() => {
+    console.error("每日外部群待办运行失败；请检查企业微信登录、Runtime Authorization、依赖和采集/发送摘要。");
+    process.exitCode = 1;
+  });
+}

@@ -14,11 +14,11 @@ official WeCom API to read chat history.
 1. Resolve yesterday in `Asia/Shanghai`, or accept `--date YYYY-MM-DD` for a backfill.
 2. Read every locally visible external group and its full date-bounded history.
 3. Continue after per-group failures, record them in the workbook, and never claim a complete run while failures remain.
-4. Identify human action messages and extract owner, group, timing, category, task, completion standard, priority, status and evidence.
+4. Identify explicit human actions with a verb and object; exclude topic-only, completed, negative and bot messages. Split actions by platform (抖音、小红书、美团), preferring message labels over group names. Mark unspecified owners as 待指派; count unclassified actions without guessing a platform.
 5. Redact URLs, email addresses, phone numbers and long identifiers before writing workbook cells. Never persist raw chat history.
 6. Generate `汇总`, `待办清单` and `聊天行动明细` sheets with editable status values `待确认`, `进行中`, `已完成` and `阻塞`.
-7. Recalculate, inspect key ranges, scan formula errors, render the sheets and write the workbook to `outputs/daily-wecom-todos/`.
-8. With `--send`, upload only the generated workbook to the configured WeCom robot webhook and fail if either upload or send is unsuccessful.
+7. Recalculate, inspect key ranges, scan formula errors, render the sheets and write three platform workbooks to `outputs/daily-wecom-todos/`, including empty lists when no actions exist.
+8. With `--send`, require zero external-group read failures before uploading the three generated workbooks to the configured WeCom robot webhook. Fail if either upload or send is unsuccessful.
 
 ## Configuration
 
