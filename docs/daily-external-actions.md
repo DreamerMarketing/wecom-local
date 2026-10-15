@@ -39,6 +39,24 @@ export WECOM_ARTIFACT_TOOL='/path/to/artifact_tool.mjs'
 ## 手动运行
 
 ```bash
+bash scripts/run-wecom-model-daily.sh --prepare
+# 由 Codex 按最新 Skill 和收录标准生成 reviewed.json 后：
+bash scripts/run-wecom-model-daily.sh --actions .local/wecom-local/model-review/YYYY-MM-DD/reviewed.json
+# 检查预览、内容、运营人及脱敏后：
+bash scripts/run-wecom-model-daily.sh --actions .local/wecom-local/model-review/YYYY-MM-DD/reviewed.json --send
+```
+
+默认每个平台仅一张待办清单，5列：群、负责人、待办事项、截止时间、状态。
+文件名为 `<平台>运营待办事项_<被分析日期>.xlsx`，不包含“简版”。
+负责人是同群、同门店、对应平台的跟进运营，明确指派/承接优先，其次结合固定
+运营对接关系；商家素材或充值配合不填写商家付款人。真实无法确定时标“待确认”。
+完整证据、负责人判断依据和采集统计保留在私有审阅文件，不增加对外表格列数。
+收录门槛见 `docs/daily-action-inclusion-policy.md`，不得将常规汇报、客资督促、
+分享链接或仅因媒体不可读而推测的核实事项换措辞重新生成。
+
+## 旧规则提取（仅显式选择）
+
+```bash
 scripts/run-wecom-daily-external-actions.sh --dry-run
 scripts/run-wecom-daily-external-actions.sh --date 2026-01-01 --dry-run
 scripts/run-wecom-daily-external-actions.sh --send
@@ -62,10 +80,14 @@ scripts/run-wecom-daily-external-actions.sh --send
 
 ```text
 使用 $wecom-daily-external-actions，在 /path/to/wecom-local 项目运行
+每天北京时间 08:00 完整阅读仓库 Skill 和最新收录标准，
 模型辅助工作流：--prepare 采集完整脱敏聊天，由 Codex 按群结合上下文审阅，
 写入 reviewed.json，然后 --actions 生成预览并审阅，最后 --send。
 按 Asia/Shanghai 分析昨天，要求所有外部群读取成功；保留三平台 Excel，
 报告采集、大模型分析及发送结果，禁止用关键词结果冒充模型分析。
+按同群同门店同平台的对接关系补齐跟进运营，并保存 ownerResolution 证据；
+每份只输出5列，文件名为 <平台>运营待办事项_<被分析日期>.xlsx，不含“简版”。
+日常运行不使用修订模式，也不重发历史报告；发送状态不明时停止自动重发。
 ```
 
 定时任务的时间和状态属于 Codex Desktop 本地配置，不写入 Git。仓库提交内容提供可复现的 Skill、脚本、配置示例和运行文档。
