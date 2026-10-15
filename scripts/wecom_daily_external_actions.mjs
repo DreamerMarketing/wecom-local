@@ -32,7 +32,7 @@ function parseArgs(argv) {
   return result;
 }
 
-function datePartsInShanghai(date = new Date()) {
+export function datePartsInShanghai(date = new Date()) {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Shanghai",
     year: "numeric",
@@ -43,13 +43,13 @@ function datePartsInShanghai(date = new Date()) {
   return `${values.year}-${values.month}-${values.day}`;
 }
 
-function shiftDate(dateText, days) {
+export function shiftDate(dateText, days) {
   const value = new Date(`${dateText}T00:00:00Z`);
   value.setUTCDate(value.getUTCDate() + days);
   return value.toISOString().slice(0, 10);
 }
 
-function parseDateTime(value) {
+export function parseDateTime(value) {
   if (!value) return null;
   const text = String(value).trim();
   const normalized = text.includes("T") ? text : text.replace(" ", "T");
@@ -61,7 +61,7 @@ function parseDateTime(value) {
   return Number.isNaN(parsed.getTime()) ? text : parsed;
 }
 
-function redact(value) {
+export function redact(value) {
   return String(value ?? "")
     .replace(/https?:\/\/\S+/gi, "[链接已隐藏]")
     .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, "[邮箱已隐藏]")
@@ -142,7 +142,7 @@ function isBotLike(sender, text) {
   return automatedSender || automatedLeadNotice || acknowledgementOnly;
 }
 
-function messageDateInShanghai(message) {
+export function messageDateInShanghai(message) {
   const timeText = String(message.send_time_text ?? "").trim();
   const dateMatch = timeText.match(/^(\d{4}-\d{2}-\d{2})/);
   if (dateMatch) return dateMatch[1];
@@ -191,7 +191,7 @@ function extractCandidate(message, groupName, action) {
 }
 
 
-async function runCli(args) {
+export async function runCli(args) {
   const { stdout } = await execFileAsync("/usr/bin/sudo", ["-n", binaryPath, ...args], {
     cwd: repoDir,
     encoding: "utf8",
@@ -204,7 +204,7 @@ function sleep(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-async function ensureWeComReady() {
+export async function ensureWeComReady() {
   try {
     await execFileAsync("/usr/bin/pgrep", ["-x", "企业微信"], { encoding: "utf8" });
   } catch {
@@ -229,7 +229,7 @@ async function ensureWeComReady() {
   throw new Error(`企业微信桌面端未就绪：${lastStatus}`);
 }
 
-async function fetchHistories(conversations, since, until) {
+export async function fetchHistories(conversations, since, until) {
   let next = 0;
   const results = new Array(conversations.length);
   async function worker() {
@@ -264,7 +264,7 @@ function priorityRank(priority) {
   return priority === "P0" ? 0 : priority === "P1" ? 1 : 2;
 }
 
-export function buildWorkbook({ targetDate, platform, candidates, failures, counts }) {
+export function buildWorkbook({ targetDate, platform, candidates, failures, counts, analysisMode = "规则提取" }) {
   const workbook = Workbook.create();
   const summarySheet = workbook.worksheets.add("汇总");
   const todoSheet = workbook.worksheets.add("待办清单");
@@ -325,13 +325,13 @@ export function buildWorkbook({ targetDate, platform, candidates, failures, coun
     });
   }
   function asTodoRow(item, index) {
-    return [index + 1, item.timing, item.timing === "持续跟进" ? "持续" : item.timing, item.sender, item.group, item.category, item.task, completionStandard(item.category), item.priority, item.status, item.source];
+    return [index + 1, item.timing, item.timing === "持续跟进" ? "持续" : item.timing, item.sender, item.group, item.category, item.task, item.completion || completionStandard(item.category), item.priority, item.status, item.source];
   }
   function asDetailRow(item) {
     return [item.time, item.sender, item.group, item.timing, item.category, item.task, item.source, item.priority, item.status, item.messageId];
   }
 
-  title(summarySheet, "A2:H2", `${platform}运营待办总览`, `统计日期：${targetDate}，${platform}外部群行动分析`, "A2");
+  title(summarySheet, "A2:H2", `${platform}运营待办总览`, `统计日期：${targetDate}，${platform}外部群行动分析（${analysisMode}）`, "A2");
   summarySheet.getRange("A4:B11").values = [
     ["数据指标", "数值"], ["外部群会话", counts.externalGroups], ["有聊天记录的群", counts.groupsWithMessages], ["当日消息总数", counts.totalMessages],
     ["扫描消息ID", counts.totalScanned], ["文本消息", counts.textMessages], ["明确行动候选", candidates.length], ["归并待办", todoRows.length],

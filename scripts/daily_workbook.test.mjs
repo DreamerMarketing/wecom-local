@@ -8,11 +8,12 @@ const { SpreadsheetFile } = await import(process.env.WECOM_ARTIFACT_TOOL);
 
 test("platform workbooks export three sheets, editable status and distinct numbered actions", async () => {
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "wecom-workbook-test-"));
-  const candidate = { time: new Date("2026-01-01T09:00:00Z"), sender: "待指派（发言者：示例运营）", group: "合成示例群", timing: "今天", category: "素材管理", task: "拍摄视频1", source: "请拍摄视频1", priority: "P1", status: "待确认", messageId: "", score: 2 };
+  const candidate = { time: new Date("2026-01-01T09:00:00Z"), sender: "待指派（发言者：示例运营）", group: "合成示例群", timing: "今天", category: "素材管理", task: "拍摄视频1", completion: "建议标准：视频回传并获得确认", source: "请拍摄视频1", priority: "P1", status: "待确认", messageId: "", score: 2 };
   for (const platform of ["抖音", "小红书", "美团"]) {
     const candidates = platform === "抖音" ? [candidate, { ...candidate, task: "拍摄视频2", source: "请拍摄视频2" }] : [];
     const built = buildWorkbook({ targetDate: "2026-01-01", platform, candidates, failures: [], counts: { externalGroups: 1, groupsWithMessages: 1, totalMessages: 2, totalScanned: 2, textMessages: 2 } });
     assert.equal(built.todoRows.length, candidates.length);
+    if (candidates.length) assert.equal(built.workbook.worksheets.getItem("待办清单").getRange("H5").values[0][0], candidate.completion);
     assert.equal(built.workbook.worksheets.getItem("汇总").getRange("B11").values[0][0], candidates.length);
     assert.match(built.workbook.worksheets.getItem("待办清单").getRange("D2").values[0][0], new RegExp(platform));
     assert.deepEqual(built.workbook.worksheets.getItem("待办清单").getRange("J5").dataValidation.rule.values, ["待确认", "进行中", "已完成", "阻塞"]);
